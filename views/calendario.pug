@@ -1,0 +1,43 @@
+extends index.pug
+
+block content
+  .container.mt-5
+    h2.mb-4 Establecer Calendario de Riego
+
+    form(action="/guardar-riego", method="POST")
+      .row.g-3.align-items-center
+        .col-auto
+          label.col-form-label(for="dia_semana") Día de la Semana
+        .col-auto
+          select.form-select#dia_semana(name="dia_semana", required)
+            option(value="") Seleccionar día
+            option(value="Lunes") Lunes
+            option(value="Martes") Martes
+            option(value="Miércoles") Miércoles
+            option(value="Jueves") Jueves
+            option(value="Viernes") Viernes
+            option(value="Sábado") Sábado
+            option(value="Domingo") Domingo
+        .col-auto
+          label.col-form-label(for="hora") Hora
+        .col-auto
+          input.form-control#hora(type="time", name="hora", required)
+        .col-auto
+          button.btn.btn-primary(type="submit") Guardar Riego
+
+    hr.my-5
+
+    h3 Riegos Programados
+    if riegos && riegos.length > 0
+      table.table.table-striped
+        thead
+          tr
+            th Día
+            th Hora
+        tbody
+          each riego in riegos
+            tr
+              td #{riego.dia_semana}
+              td #{riego.hora}
+    else
+      p No hay riegos programados.

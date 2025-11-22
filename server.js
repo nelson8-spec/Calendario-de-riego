@@ -1,6 +1,6 @@
 const express = require('express');
 const bodyParser = require('body-parser')
-const mysql = require('mysql');
+const mysql = require('mysql2');
 
 const app = express();
 const port = 3000;
@@ -36,3 +36,31 @@ app.listen(port, () => {
     console.log(`Servidor iniciando en http://localhost:${port}`);
 });
 
+app.get('/calendario', (req, res) => {
+    const sql = 'SELECT dia_semana, TIME_FORMAT(hora, "%H:%i") AS hora FROM calendario_riego ORDER BY FIELD(dia_semana, "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"), hora';
+
+    db.query(sql, (err, results) => {
+        if (err) {
+            console.error(err);
+            return res.status(500).send('Error al cargar calendario.');
+        }
+        res.render('calendario', {
+            title: 'Calendario de riego',
+            riegos: results 
+        });
+    });
+});
+
+app.post('/guardar-riego', (req, res) => {
+    const { dia_semana, hora } = req.body;
+
+    const sql = 'INSERT INTO calendario_riego (dia_semana, hora) VALUES (?, ?)';
+    db.query(sql, [dia_semana, hora], (err, results) => {
+        if (err) {
+            console.error(err);
+            return res.status(500).send('Error al guardar riego.');
+        }
+        console.log('Riego guardado con ID:', results.insertId);
+        res.redirect('/calendario');
+    });
+});
