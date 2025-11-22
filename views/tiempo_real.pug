@@ -1,0 +1,25 @@
+extends index.pug
+
+block content
+  .container.mt-5
+    h2.mb-4 Datos Ambientales en Tiempo Real
+
+    .card.text-center.shadow-sm
+      .card-header
+        | Último Registro
+      .card-body
+        if data
+          h3.card-title
+            i.bi.bi-droplet-fill.text-primary
+            | Humedad: 
+            span#humedad-tiempo-real #{data.humedad_relativa}%
+          h3.card-title.mt-3
+            i.bi.bi-thermometer-high.text-danger
+            | Temperatura: 
+            span#temperatura-tiempo-real #{data.temperatura}°C
+          p.card-text.text-muted Registrado el: #{data.timestamp}
+          
+          if data.alerta
+            .alert.alert-danger.mt-4 #{data.alerta}
+        else
+          p No hay datos registrados.
