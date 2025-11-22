@@ -29,7 +29,40 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
 app.get('/', (req, res) => {
-    res.render('index', { title: 'Monitos de Orquideas' });
+    const hoy = getDayName();
+    const now = new Date();
+    const hora_actual = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+
+    const sql = 'SELECT TIME_FORMAT(hora, "%H:%i") AS hora FROM calendario_riego WHERE dia_semana = ? AND hora > ? ORDER BY hora ASC LIMIT 1';
+    
+    db.query(sql, [hoy, hora_actual], (err, results) => {
+        let notificacion = '';
+
+        if (err) {
+            console.error(err);
+            notificacion = 'Error al verificar calendario de riego.';
+        } else if (results.length > 0) {
+            notificacion = `Recordatorio. Proxmo riego hoy a las ${results[0].hora}`;
+        } else {
+            const sql_pasado = 'SELECT TIME_FORMAT(hora, "%H:%i") AS hora FROM calendario_riego WHERE dia_semana = ? AND hora < ? ORDER BY hora DESC LIMIT 1';
+            db.query(sql_pasado, [hoy, hora_actual], (err_pasado, results_pasado) => {
+                if (results_pasado.length > 0) {
+                    notificacion = `Riefo de hoy a las ${results_pasado[0].hora} completado.`;
+                }
+
+                res.render('index', {
+                    title: 'Calendario de riego',
+                    notificacion: notificacion
+                });
+            });
+            return;
+        }
+
+        res.render('index', {
+            title: 'Calendario de riego',
+            notificacion: notificacion
+        });
+    });
 });
 
 app.listen(port, () => {
@@ -64,3 +97,10 @@ app.post('/guardar-riego', (req, res) => {
         res.redirect('/calendario');
     });
 });
+
+function getDayName() {
+    const d = new Date();
+    const day = d.getDay();
+    const days = ['Domingo', 'Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes', 'Sabado']
+    return days[day];
+}
