@@ -1,6 +1,7 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const mysql = require('mysql2');
+const mqtt = require('mqtt'); 
 
 const app = express();
 const port = 3000;
@@ -28,7 +29,7 @@ app.use(bodyParser.json());
 
 function getDayName() {
     const d = new Date();
-    const day = d.getDay();
+    const day = d.getDay(); 
     const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
     return days[day];
 }
@@ -47,16 +48,18 @@ app.get('/', (req, res) => {
             console.error(err);
             notificacion = 'Error al verificar calendario de riego.';
         } else if (results.length > 0) {
-            notificacion = `Recordatorio, proximo riego hoy a las ${results[0].hora}`;
+            notificacion = `Recordatorio, próximo riego hoy a las ${results[0].hora}`;
         } else {
             const sql_pasado = 'SELECT TIME_FORMAT(hora, "%H:%i") AS hora FROM calendario_riego WHERE dia_semana = ? AND hora < ? ORDER BY hora DESC LIMIT 1';
             db.query(sql_pasado, [hoy, hora_actual], (err_pasado, results_pasado) => {
-                if (results_pasado.length > 0) {
+                if (err_pasado) {
+                    console.error(err_pasado);
+                } else if (results_pasado.length > 0) {
                     notificacion = `Riego de hoy a las ${results_pasado[0].hora} completado.`;
                 }
 
                 res.render('index', {
-                    title: 'Calendario de riego',
+                    title: 'Calendario de Riego',
                     notificacion: notificacion
                 });
             });
@@ -64,7 +67,7 @@ app.get('/', (req, res) => {
         }
 
         res.render('index', {
-            title: 'Calendario de riego',
+            title: 'Calendario de Riego',
             notificacion: notificacion
         });
     });
@@ -124,7 +127,7 @@ app.post('/api/datos-ambientales', (req, res) => {
             notificacion_sensor += 'Alerta: Nivel de humedad fuera del 80% óptimo';
         }
         if (temperatura < TEMP_MIN || temperatura > TEMP_MAX) {
-            notificacion_sensor += `Alerta: Temperatura fuera del rango óptimo (18ºC-24ºC)`;
+            notificacion_sensor += ' Alerta: Temperatura fuera del rango óptimo (18ºC-24ºC)';
         }
 
         if (notificacion_sensor) {
@@ -134,7 +137,7 @@ app.post('/api/datos-ambientales', (req, res) => {
         res.json({ 
             success: true, 
             message: 'Datos recibidos y procesados',
-            alerta: notificacion_sensor
+            alerta: notificacion_sensor.trim()
         });
     });
 });
@@ -148,7 +151,7 @@ app.get('/tiempo-real', (req, res) => {
             return res.status(500).send('Error al cargar datos en tiempo real');
         }
 
-        let data = results[0];
+        let data = results[0] || null;
         
         if (data) {
             const HUMEDAD_OP = 80;
@@ -160,7 +163,7 @@ app.get('/tiempo-real', (req, res) => {
                 alerta += 'Nivel de humedad fuera del 80% óptimo';
             }
             if (data.temperatura < TEMP_MIN || data.temperatura > TEMP_MAX) {
-                alerta += `Temperatura fuera del rango óptimo (18ºC-24ºC)`;
+                alerta += (alerta ? ' ' : '') + 'Temperatura fuera del rango óptimo (18ºC-24ºC)';
             }
             data.alerta = alerta;
         }
@@ -188,6 +191,69 @@ app.get('/historico', (req, res) => {
             historico: results
         });
     });
+});
+
+const mqtt_broker = 'mqtt://broker.emqx.io';
+const temperatura_topic = 'ESP8266/Temperatura';
+const humedad_topic = 'ESP8266/Humedad';
+
+const mqttClient = mqtt.connect(mqtt_broker);
+console.log('Intentando conectar al broker MQTT...');
+
+let latestData = {
+    humedad: null,
+    temperatura: null,
+    timestamp: null
+};
+
+mqttClient.on('connect', () => {
+    console.log('Conectado exitosamente al broker MQTT.');
+    mqttClient.subscribe([temperatura_topic, humedad_topic], (err) => {
+        if (err) {
+            console.error('Error al suscribirse a tópicos MQTT:', err);
+        } else {
+            console.log(`Suscrito a los tópicos: ${temperatura_topic} y ${humedad_topic}`);
+        }
+    });
+});
+
+mqttClient.on('message', (topic, message) => {
+    const value = parseFloat(message.toString());
+    const now = new Date();
+    if (isNaN(value)) return;
+
+    if (topic === humedad_topic) {
+        latestData.humedad = value;
+    } else if (topic === temperatura_topic) {
+        latestData.temperatura = value;
+    }
+    latestData.timestamp = now;
+
+    if (latestData.humedad !== null && latestData.temperatura !== null) {
+        const sql_insert = 'INSERT INTO historial_ambiental (humedad_relativa, temperatura) VALUES (?, ?)';
+        
+        db.query(sql_insert, [latestData.humedad, latestData.temperatura], (err, result) => {
+            if (err) {
+                console.error('Error al guardar datos de sensor (MQTT):', err);
+                return;
+            }
+            
+            console.log(`Dato MQTT guardado. H: ${latestData.humedad}%, T: ${latestData.temperatura}°C`);
+            
+            const HUMEDAD_OP = 80;
+            const TEMP_MIN = 18;
+            const TEMP_MAX = 24;
+            
+            const fueraHumedad = (latestData.humedad < HUMEDAD_OP - 5 || latestData.humedad > HUMEDAD_OP + 5);
+            const fueraTemp = (latestData.temperatura < TEMP_MIN || latestData.temperatura > TEMP_MAX);
+            if (fueraHumedad || fueraTemp) {
+                console.warn('🚨 ALERTA (MQTT): Condición ambiental fuera del rango óptimo.');
+            }
+            
+            latestData.humedad = null;
+            latestData.temperatura = null;
+        });
+    }
 });
 
 app.listen(port, () => {
