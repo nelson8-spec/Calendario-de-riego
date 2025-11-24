@@ -11,8 +11,8 @@ echo "========================================"
 PGPASSWORD=$PGPASSWORD pg_dump -h $DB_HOST -U $DB_USER -d $DB_NAME > "$BACKUP_FILE"
 
 if [ $? -eq 0 ]; then
-  echo "✅ Backup exitoso: $BACKUP_FILE"
+  echo "Backup exitoso: $BACKUP_FILE"
 else
-  echo "❌ Error durante el backup."
+  echo "Error durante el backup."
 fi
 echo "========================================"
