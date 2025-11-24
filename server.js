@@ -1,31 +1,43 @@
 const express = require('express');
-const bodyParser = require('body-parser');
-const mysql = require('mysql2');
-const mqtt = require('mqtt'); 
+const mqtt = require('mqtt');
+const { Pool } = require('pg'); 
 
 const app = express();
 const port = 3000;
 
-const db = mysql.createConnection({
-    host: 'localhost',
-    user: 'root',
-    password: '62}91Adc_.c5',
-    database: 'calendario_de_riego'
+const pool = new Pool({
+    user: process.env.PGUSER || 'postgres_user',        
+    host: process.env.PGHOST || 'localhost',          
+    database: process.env.PGDATABASE || 'orquidea_db',  
+    password: process.env.PGPASSWORD || 'postgres_password',
+    port: process.env.PGPORT || 5432,
+    max: 20, 
+    idleTimeoutMillis: 30000 
 });
 
-db.connect((err) => {
-    if (err) {
-        console.error('Error al conectar a la base de datos: ' + err.stack);
-        return;
-    }
-    console.log('Conectado a la base de datos MySQL como id ' + db.threadId);
+pool.on('connect', () => {
+    console.log('PostgreSQL: Conectado exitosamente a la base de datos.');
 });
+
+pool.on('error', (err) => {
+    console.error('PostgreSQL: Error inactivo en la conexión al pool:', err);
+});
+
+async function query(text, params) {
+    const client = await pool.connect();
+    try {
+        const res = await client.query(text, params);
+        return res;
+    } finally {
+        client.release();
+    }
+}
 
 app.set('view engine', 'pug');
 app.set('views', './views');
 app.use(express.static('public'));
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
 function getDayName() {
     const d = new Date();
@@ -34,136 +46,119 @@ function getDayName() {
     return days[day];
 }
 
-app.get('/', (req, res) => {
+app.get('/', async (req, res) => {
     const hoy = getDayName();
     const now = new Date();
     const hora_actual = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
 
-    const sql = 'SELECT TIME_FORMAT(hora, "%H:%i") AS hora FROM calendario_riego WHERE dia_semana = ? AND hora > ? ORDER BY hora ASC LIMIT 1';
+    let notificacion = '';
     
-    db.query(sql, [hoy, hora_actual], (err, results) => {
-        let notificacion = '';
+    try {
+        const sql_proximo = 'SELECT hora FROM calendario_riego WHERE dia_semana = $1 AND hora > $2::time ORDER BY hora ASC LIMIT 1';
+        let result = await query(sql_proximo, [hoy, hora_actual]);
 
-        if (err) {
-            console.error(err);
-            notificacion = 'Error al verificar calendario de riego.';
-        } else if (results.length > 0) {
-            notificacion = `Recordatorio, próximo riego hoy a las ${results[0].hora}`;
+        if (result.rows.length > 0) {
+            const hora_riego = result.rows[0].hora.substring(0, 5); 
+            notificacion = `Recordatorio: Próximo riego hoy a las ${hora_riego}`;
         } else {
-            const sql_pasado = 'SELECT TIME_FORMAT(hora, "%H:%i") AS hora FROM calendario_riego WHERE dia_semana = ? AND hora < ? ORDER BY hora DESC LIMIT 1';
-            db.query(sql_pasado, [hoy, hora_actual], (err_pasado, results_pasado) => {
-                if (err_pasado) {
-                    console.error(err_pasado);
-                } else if (results_pasado.length > 0) {
-                    notificacion = `Riego de hoy a las ${results_pasado[0].hora} completado.`;
-                }
+            const sql_pasado = 'SELECT hora FROM calendario_riego WHERE dia_semana = $1 AND hora < $2::time ORDER BY hora DESC LIMIT 1';
+            let result_pasado = await query(sql_pasado, [hoy, hora_actual]);
 
-                res.render('index', {
-                    title: 'Calendario de Riego',
-                    notificacion: notificacion
-                });
-            });
-            return;
+            if (result_pasado.rows.length > 0) {
+                const hora_riego = result_pasado.rows[0].hora.substring(0, 5);
+                notificacion = `Riego de hoy a las ${hora_riego} completado.`;
+            } else {
+                notificacion = 'No hay riegos programados para hoy.';
+            }
         }
-
+        
         res.render('index', {
-            title: 'Calendario de Riego',
+            title: 'Monitor de Orquídeas',
             notificacion: notificacion
         });
-    });
+
+    } catch (err) {
+        console.error('Error al verificar calendario de riego:', err);
+        res.render('index', { title: 'Monitor de Orquídeas', notificacion: 'Error al verificar calendario de riego.' });
+    }
 });
 
-app.get('/calendario', (req, res) => {
-    const sql = 'SELECT dia_semana, TIME_FORMAT(hora, "%H:%i") AS hora FROM calendario_riego ORDER BY FIELD(dia_semana, "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"), hora';
+app.get('/calendario', async (req, res) => {
+    const sql = `
+        SELECT dia_semana, TO_CHAR(hora, 'HH24:MI') AS hora, id
+        FROM calendario_riego 
+        ORDER BY 
+            CASE dia_semana
+                WHEN 'Lunes' THEN 1
+                WHEN 'Martes' THEN 2
+                WHEN 'Miércoles' THEN 3
+                WHEN 'Jueves' THEN 4
+                WHEN 'Viernes' THEN 5
+                WHEN 'Sábado' THEN 6
+                WHEN 'Domingo' THEN 7
+            END,
+            hora;
+    `;
 
-    db.query(sql, (err, results) => {
-        if (err) {
-            console.error(err);
-            return res.status(500).send('Error al cargar calendario');
-        }
+    try {
+        const result = await query(sql);
         res.render('calendario', {
             title: 'Calendario de Riego',
-            riegos: results 
+            riegos: result.rows 
         });
-    });
+    } catch (err) {
+        console.error('Error al cargar calendario:', err);
+        return res.status(500).send('Error al cargar calendario');
+    }
 });
 
-app.post('/guardar-riego', (req, res) => {
+app.post('/guardar-riego', async (req, res) => {
     const { dia_semana, hora } = req.body;
 
-    const sql = 'INSERT INTO calendario_riego (dia_semana, hora) VALUES (?, ?)';
-    db.query(sql, [dia_semana, hora], (err, results) => {
-        if (err) {
-            console.error(err);
-            return res.status(500).send('Error al guardar riego.');
-        }
-        console.log('Riego guardado con ID:', results.insertId);
+    const sql = 'INSERT INTO calendario_riego (dia_semana, hora) VALUES ($1, $2) RETURNING id';
+    try {
+        const result = await query(sql, [dia_semana, hora]);
+        console.log('Riego guardado con ID:', result.rows[0].id);
         res.redirect('/calendario');
-    });
-});
-
-app.post('/api/datos-ambientales', (req, res) => {
-    const { humedad, temperatura } = req.body;
-
-    if (typeof humedad === 'undefined' || typeof temperatura === 'undefined') {
-        return res.status(400).json({ success: false, message: 'Faltan datos de humedad o temperatura' });
+    } catch (err) {
+        console.error('Error al guardar riego:', err, `Valores: ${dia_semana}, ${hora}`);
+        res.status(500).send('Error al guardar riego. Verifique el formato de día/hora.');
     }
-
-    const sql_insert = 'INSERT INTO historial_ambiental (humedad_relativa, temperatura) VALUES (?, ?)';
-    db.query(sql_insert, [humedad, temperatura], (err, result) => {
-        if (err) {
-            console.error('Error al guardar datos de sensor:', err);
-            return res.status(500).json({ success: false, message: 'Error interno del servidor' });
-        }
-        
-        console.log(`Dato ambiental recibido y guardado. Humedad: ${humedad}%, Temp: ${temperatura}°C`);
-        
-        let notificacion_sensor = '';
-        const HUMEDAD_OP = 80;
-        const TEMP_MIN = 18;
-        const TEMP_MAX = 24;
-        
-        if (humedad < HUMEDAD_OP - 5 || humedad > HUMEDAD_OP + 5) {
-            notificacion_sensor += 'Alerta: Nivel de humedad fuera del 80% óptimo';
-        }
-        if (temperatura < TEMP_MIN || temperatura > TEMP_MAX) {
-            notificacion_sensor += ' Alerta: Temperatura fuera del rango óptimo (18ºC-24ºC)';
-        }
-
-        if (notificacion_sensor) {
-            console.warn(notificacion_sensor);
-        }
-
-        res.json({ 
-            success: true, 
-            message: 'Datos recibidos y procesados',
-            alerta: notificacion_sensor.trim()
-        });
-    });
 });
 
-app.get('/tiempo-real', (req, res) => {
-    const sql = 'SELECT *, DATE_FORMAT(timestamp, "%Y-%m-%d %H:%i:%s") AS timestamp FROM historial_ambiental ORDER BY id DESC LIMIT 1';
-    
-    db.query(sql, (err, results) => {
-        if (err) {
-            console.error(err);
-            return res.status(500).send('Error al cargar datos en tiempo real');
-        }
+app.post('/eliminar-riego', async (req, res) => {
+    const { id } = req.body;
 
-        let data = results[0] || null;
-        
+    const sql = 'DELETE FROM calendario_riego WHERE id = $1';
+    try {
+        await query(sql, [id]);
+        console.log(`Riego con ID ${id} eliminado.`);
+        res.redirect('/calendario');
+    } catch (err) {
+        console.error('Error al eliminar riego:', err);
+        res.status(500).send('Error al eliminar riego.');
+    }
+});
+
+app.get('/tiempo-real', async (req, res) => {
+    const sql = 'SELECT humedad_relativa, temperatura, TO_CHAR(timestamp, \'YYYY-MM-DD HH24:MI:SS\') AS timestamp FROM historial_ambiental ORDER BY id DESC LIMIT 1';
+    
+    try {
+        const result = await query(sql);
+        let data = result.rows[0] || null; 
+
         if (data) {
             const HUMEDAD_OP = 80;
             const TEMP_MIN = 18;
             const TEMP_MAX = 24;
             
             let alerta = '';
+
             if (data.humedad_relativa < HUMEDAD_OP - 5 || data.humedad_relativa > HUMEDAD_OP + 5) { 
                 alerta += 'Nivel de humedad fuera del 80% óptimo';
             }
             if (data.temperatura < TEMP_MIN || data.temperatura > TEMP_MAX) {
-                alerta += (alerta ? ' ' : '') + 'Temperatura fuera del rango óptimo (18ºC-24ºC)';
+                alerta += (alerta ? ' y ' : '') + 'Temperatura fuera del rango óptimo (18ºC-24ºC)';
             }
             data.alerta = alerta;
         }
@@ -172,25 +167,27 @@ app.get('/tiempo-real', (req, res) => {
             title: 'Datos en Tiempo Real',
             data: data
         });
-    });
+    } catch (err) {
+        console.error('Error al cargar datos en tiempo real:', err);
+        res.status(500).send('Error al cargar datos en tiempo real.');
+    }
 });
 
-app.get('/historico', (req, res) => {
+app.get('/historico', async (req, res) => {
     const limit = parseInt(req.query.frecuencia) || 10;
     
-    const sql = 'SELECT humedad_relativa, temperatura, DATE_FORMAT(timestamp, "%Y-%m-%d %H:%i:%s") AS timestamp FROM historial_ambiental ORDER BY id DESC LIMIT ?';
+    const sql = 'SELECT humedad_relativa, temperatura, TO_CHAR(timestamp, \'YYYY-MM-DD HH24:MI:SS\') AS timestamp FROM historial_ambiental ORDER BY id DESC LIMIT $1';
     
-    db.query(sql, [limit], (err, results) => {
-        if (err) {
-            console.error(err);
-            return res.status(500).send('Error al cargar historial');
-        }
-
+    try {
+        const result = await query(sql, [limit]);
         res.render('historico', { 
             title: 'Histórico Ambiental',
-            historico: results
+            historico: result.rows
         });
-    });
+    } catch (err) {
+        console.error('Error al cargar historial:', err);
+        return res.status(500).send('Error al cargar historial');
+    }
 });
 
 const mqtt_broker = 'mqtt://broker.emqx.io';
@@ -202,24 +199,20 @@ console.log('Intentando conectar al broker MQTT...');
 
 let latestData = {
     humedad: null,
-    temperatura: null,
-    timestamp: null
+    temperatura: null
 };
 
 mqttClient.on('connect', () => {
-    console.log('Conectado exitosamente al broker MQTT.');
+    console.log('MQTT: Conectado exitosamente al broker MQTT.');
     mqttClient.subscribe([temperatura_topic, humedad_topic], (err) => {
-        if (err) {
-            console.error('Error al suscribirse a tópicos MQTT:', err);
-        } else {
-            console.log(`Suscrito a los tópicos: ${temperatura_topic} y ${humedad_topic}`);
+        if (!err) {
+            console.log(`MQTT: Suscrito a los tópicos: ${temperatura_topic} y ${humedad_topic}`);
         }
     });
 });
 
 mqttClient.on('message', (topic, message) => {
     const value = parseFloat(message.toString());
-    const now = new Date();
     if (isNaN(value)) return;
 
     if (topic === humedad_topic) {
@@ -227,35 +220,32 @@ mqttClient.on('message', (topic, message) => {
     } else if (topic === temperatura_topic) {
         latestData.temperatura = value;
     }
-    latestData.timestamp = now;
 
     if (latestData.humedad !== null && latestData.temperatura !== null) {
-        const sql_insert = 'INSERT INTO historial_ambiental (humedad_relativa, temperatura) VALUES (?, ?)';
+        const sql_insert = 'INSERT INTO historial_ambiental (humedad_relativa, temperatura) VALUES ($1, $2)';
         
-        db.query(sql_insert, [latestData.humedad, latestData.temperatura], (err, result) => {
-            if (err) {
-                console.error('Error al guardar datos de sensor (MQTT):', err);
-                return;
-            }
-            
-            console.log(`Dato MQTT guardado. H: ${latestData.humedad}%, T: ${latestData.temperatura}°C`);
-            
-            const HUMEDAD_OP = 80;
-            const TEMP_MIN = 18;
-            const TEMP_MAX = 24;
-            
-            const fueraHumedad = (latestData.humedad < HUMEDAD_OP - 5 || latestData.humedad > HUMEDAD_OP + 5);
-            const fueraTemp = (latestData.temperatura < TEMP_MIN || latestData.temperatura > TEMP_MAX);
-            if (fueraHumedad || fueraTemp) {
-                console.warn('🚨 ALERTA (MQTT): Condición ambiental fuera del rango óptimo.');
-            }
-            
-            latestData.humedad = null;
-            latestData.temperatura = null;
-        });
+        query(sql_insert, [latestData.humedad, latestData.temperatura])
+            .then(() => {
+                console.log(`MQTT: Dato guardado. H: ${latestData.humedad}%, T: ${latestData.temperatura}°C`);
+                
+                const HUMEDAD_OP = 80;
+                const TEMP_MIN = 18;
+                const TEMP_MAX = 24;
+                
+                const fueraHumedad = (latestData.humedad < HUMEDAD_OP - 5 || latestData.humedad > HUMEDAD_OP + 5);
+                const fueraTemp = (latestData.temperatura < TEMP_MIN || latestData.temperatura > TEMP_MAX);
+                
+                if (fueraHumedad || fueraTemp) {
+                    console.warn('ALERTA (MQTT): Condición ambiental fuera del rango óptimo.');
+                }
+                
+                latestData.humedad = null;
+                latestData.temperatura = null;
+            })
+            .catch(err => console.error('Error al guardar datos de sensor (MQTT):', err));
     }
 });
 
 app.listen(port, () => {
-    console.log(`Servidor iniciando en http://localhost:${port}`);
+    console.log(`Servidor Express operativo en el puerto ${port}`);
 });
