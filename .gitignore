@@ -1,0 +1,58 @@
+# Sistema operativo
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# Entornos virtuales y dependencias
+venv/
+env/
+.venv/
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+pip-log.txt
+
+# Logs y temporales
+*.log
+*.tmp
+*.bak
+*.swp
+
+# Archivos de entorno / secretos
+.env
+.env.local
+.env.*.local
+secrets.json
+
+# Build / distribución
+build/
+dist/
+*.zip
+*.tar.gz
+
+# IDEs y editores
+.idea/
+*.suo
+*.user
+*.sln
+*.db
+
+# Bases de datos locales
+*.sqlite3
+*.db
+
+# Cobertura y pruebas
+coverage/
+.coverage
+coverage.xml
+htmlcov/

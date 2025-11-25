@@ -12,4 +12,10 @@ RUN chmod +x /usr/local/bin/backup.sh
 RUN echo "0 2 * * * /usr/local/bin/backup.sh > /proc/1/fd/1 2>/proc/1/fd/2" > /etc/cron.d/backup-schedule && \
     chmod 0644 /etc/cron.d/backup-schedule
 
+# crear directorio de backups y permisos
+RUN mkdir -p /backups && chmod 0775 /backups
+
+# Asegurar que crond se ejecute como root (la imagen postgres puede cambiar el usuario por defecto)
+USER root
+
 CMD ["crond", "-f", "-L", "/var/log/cron"]

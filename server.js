@@ -1,15 +1,16 @@
 const express = require('express');
 const mqtt = require('mqtt');
 const { Pool } = require('pg'); 
+const fs = require('fs'); 
 
 const app = express();
-const port = 3000;
+const port = 5000;
 
 const pool = new Pool({
     user: process.env.PGUSER || 'postgres_user',        
     host: process.env.PGHOST || 'localhost',          
     database: process.env.PGDATABASE || 'orquidea_db',  
-    password: process.env.PGPASSWORD || 'postgres_password',
+    password: process.env.PGPASSWORD || '',
     port: process.env.PGPORT || 5432,
     max: 20, 
     idleTimeoutMillis: 30000 
@@ -30,6 +31,20 @@ async function query(text, params) {
         return res;
     } finally {
         client.release();
+    }
+}
+
+async function initializeDatabase() {
+    console.log('PostgreSQL: Verificando la estructura de la base de datos...');
+    try {
+        const initScript = fs.readFileSync('init.sql', 'utf8');
+        await query(initScript); 
+        console.log('PostgreSQL: Inicialización de tablas completada exitosamente.');
+    } catch (err) {
+        console.error('ERROR CRÍTICO: No se pudo inicializar la base de datos.');
+        console.error('Asegúrese de que el archivo init.sql exista y que la base de datos de PostgreSQL esté activa y accesible.');
+        console.error('Detalles del Error:', err.message);
+        throw err;
     }
 }
 
@@ -54,6 +69,8 @@ app.get('/', async (req, res) => {
     let notificacion = '';
     
     try {
+        // SQL para buscar el PRÓXIMO riego programado para HOY
+        // Usamos $1, $2 y la conversión a tipo time de PostgreSQL
         const sql_proximo = 'SELECT hora FROM calendario_riego WHERE dia_semana = $1 AND hora > $2::time ORDER BY hora ASC LIMIT 1';
         let result = await query(sql_proximo, [hoy, hora_actual]);
 
@@ -153,7 +170,6 @@ app.get('/tiempo-real', async (req, res) => {
             const TEMP_MAX = 24;
             
             let alerta = '';
-
             if (data.humedad_relativa < HUMEDAD_OP - 5 || data.humedad_relativa > HUMEDAD_OP + 5) { 
                 alerta += 'Nivel de humedad fuera del 80% óptimo';
             }
@@ -246,6 +262,12 @@ mqttClient.on('message', (topic, message) => {
     }
 });
 
-app.listen(port, () => {
-    console.log(`Servidor Express operativo en el puerto ${port}`);
-});
+initializeDatabase()
+    .then(() => {
+        app.listen(port, () => {
+            console.log(`Servidor Express operativo en el puerto ${port}`);
+        });
+    })
+    .catch(err => {
+        console.error('Fallo al iniciar el servidor debido a error de DB.', err);
+    });

@@ -9,6 +9,8 @@ services:
       POSTGRES_USER: postgres_user
       POSTGRES_PASSWORD: postgres_password
       POSTGRES_DB: orquidea_db
+    ports:
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-db:/docker-entrypoint-initdb.d
@@ -23,6 +25,8 @@ services:
   backend:
     build: . 
     container_name: orquidea_backend
+    ports:
+      - ":3000"             # <-- exponer backend al host
     environment:
       PGUSER: postgres_user
       PGPASSWORD: postgres_password
@@ -55,6 +59,7 @@ services:
       PGPASSWORD: postgres_password
       PGDATABASE: orquidea_db
       PGHOST: db
+      PGPORT: 5432
     volumes:
       - backup_data:/backups
     depends_on:
