@@ -4,7 +4,12 @@ const { Pool } = require('pg');
 const fs = require('fs'); 
 
 const app = express();
-const port = 5000;
+const port = process.env.PORT || 5000;
+
+if (!process.env.PGHOST || !process.env.PGUSER) {
+    console.error('ERROR: Variables de entorno PostgreSQL no configuradas.');
+    process.exit(1);
+}
 
 const pool = new Pool({
     user: process.env.PGUSER || 'postgres_user',        
