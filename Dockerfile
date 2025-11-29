@@ -13,7 +13,6 @@ EXPOSE 5000
 CMD [ "node", "server.js" ]
 
 name: Deploy to Azure
-
 on:
   push:
     branches: [main]
