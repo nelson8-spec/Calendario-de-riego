@@ -42,12 +42,22 @@ async function query(text, params) {
 async function initializeDatabase() {
     console.log('PostgreSQL: Verificando la estructura de la base de datos...');
     try {
-        const initScript = fs.readFileSync('init.sql', 'utf8');
-        await query(initScript); 
-        console.log('PostgreSQL: Inicialización de tablas completada exitosamente.');
+        let initPath = null;
+        if (fs.existsSync('init.sql')) {
+            initPath = 'init.sql';
+        } else if (fs.existsSync('init-db/init.sql')) {
+            initPath = 'init-db/init.sql';
+        }
+
+        if (initPath) {
+            const initScript = fs.readFileSync(initPath, 'utf8');
+            await query(initScript);
+            console.log(`PostgreSQL: Inicialización de tablas completada exitosamente (archivo: ${initPath}).`);
+        } else {
+            console.warn('PostgreSQL: No se encontró archivo init.sql ni init-db/init.sql. Se omite inicialización automática.');
+        }
     } catch (err) {
-        console.error('ERROR CRÍTICO: No se pudo inicializar la base de datos.');
-        console.error('Asegúrese de que el archivo init.sql exista y que la base de datos de PostgreSQL esté activa y accesible.');
+        console.error('ERROR: Ocurrió un problema al intentar inicializar la base de datos con el script SQL.');
         console.error('Detalles del Error:', err.message);
         throw err;
     }
